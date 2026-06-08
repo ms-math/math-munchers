@@ -113,7 +113,7 @@ let deathTime = 0;
 let deathPlayerPos = { x: 0, y: 0 };
 let eatingAnimations = []; 
 
-// UPDATED: 3 Monsters in final two levels
+// 3 Monsters in final two levels
 const levelConfig = [
     { target: 8,   monsters: 1, speed: 2000 }, 
     { target: 10,  monsters: 1, speed: 2000 }, 
@@ -318,7 +318,7 @@ function handleDeath(reason, num1, num2) {
 
     setTimeout(() => {
         if (lives <= 0) {
-            // NEW: Check for High Score Qualification before Game Over
+            // Check for High Score Qualification before Game Over
             let isHighScore = false;
             let bestScores = globalLeaderboardData.bestScoreBoard || [];
             if (score > 0 && (bestScores.length < 5 || score > bestScores[bestScores.length - 1].score)) {
@@ -470,7 +470,7 @@ function drawTransition() {
 function drawNameEntry() {
     ctx.fillStyle = '#000080'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // UPDATED: Dynamically change the title based on WHY they are entering their name
+    // Dynamically change the title based on WHY they are entering their name
     if (entryReason === 'highscore') {
         ctx.fillStyle = '#FF00FF'; ctx.font = '40px Courier New'; ctx.textAlign = 'center';
         ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, 100);
@@ -578,8 +578,11 @@ function drawGame() {
     
     for (let m of monsters) {
         if (m.state === 'active') {
-            let x = m.x * CELL_WIDTH, y = m.y * CELL_HEIGHT + GRID_OFFSET_Y;
-            ctx.drawImage(images.monster, x + 5, y, CELL_WIDTH - 10, CELL_HEIGHT);
+            // FIX: Only draw the monster if it is inside the grid boundaries
+            if (m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS) {
+                let x = m.x * CELL_WIDTH, y = m.y * CELL_HEIGHT + GRID_OFFSET_Y;
+                ctx.drawImage(images.monster, x + 5, y, CELL_WIDTH - 10, CELL_HEIGHT);
+            }
         }
     }
 
