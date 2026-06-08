@@ -94,7 +94,7 @@ const CELL_WIDTH = 100;
 const CELL_HEIGHT = 80;
 const GRID_OFFSET_Y = 100; 
 
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzH9u7Owl-7HphVQyl1xLkEn-pTxRR1kPqIuGVjIMNX5uzVZwyR9Oils-fYLVXTy01v/exec'; 
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxDCG5H7gPQ7cXVIzTDY2KK0w5qrzO7sdUjH0S5JMOU11Cp64SaYuRXd8nmWFKmeRbr/exec'; 
 
 let gameState = 'MENU'; 
 let level = 1;
