@@ -7,7 +7,6 @@ images.frog.src = 'images/frog.png';
 images.monster.src = 'images/monster.png';
 
 // --- YOUTUBE CUTSCENE CONFIGURATION ---
-// Paste the 11-character YouTube ID here, and set the start/end in seconds.
 const cutscenes = {
     3: { id: 'z-o8T5K2eD0', start: 35, end: 55 }, // Plays after Level 3
     6: { id: 'z-o8T5K2eD0', start: 67, end: 83 }, // Plays after Level 6
@@ -89,7 +88,6 @@ const CELL_WIDTH = 100;
 const CELL_HEIGHT = 80;
 const GRID_OFFSET_Y = 100; 
 
-// IMPORTANT: Paste your Web App URL here!
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzH9u7Owl-7HphVQyl1xLkEn-pTxRR1kPqIuGVjIMNX5uzVZwyR9Oils-fYLVXTy01v/exec'; 
 
 let gameState = 'MENU'; 
@@ -157,11 +155,33 @@ function generateGrid() {
     resetEntities();
 }
 
+// NEW: Generates multi-directional spawns and straight paths for entry
+function getRandomSpawn(index) {
+    if (level === 1) {
+        // Level 1: Always come from the left edge
+        return { x: -1 - (index * 2), y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0, warned: false };
+    }
+
+    // Level 2+: Randomize between Left (0), Right (1), Top (2), or Bottom (3)
+    const side = Math.floor(Math.random() * 4);
+    const stagger = index * 2;
+
+    if (side === 0) { // From Left
+        return { x: -1 - stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0, warned: false };
+    } else if (side === 1) { // From Right
+        return { x: GRID_COLS + stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: -1, dy: 0, warned: false };
+    } else if (side === 2) { // From Top
+        return { x: Math.floor(Math.random() * GRID_COLS), y: -1 - stagger, dx: 0, dy: 1, warned: false };
+    } else { // From Bottom
+        return { x: Math.floor(Math.random() * GRID_COLS), y: GRID_ROWS + stagger, dx: 0, dy: -1, warned: false };
+    }
+}
+
 function resetEntities() {
     const config = levelConfig[level - 1];
     monsters = [];
     for (let i = 0; i < config.monsters; i++) {
-        monsters.push({ x: -1 - (i * 2), y: Math.floor(Math.random() * GRID_ROWS), warned: false });
+        monsters.push(getRandomSpawn(i));
     }
     player = { x: 2, y: 2 };
 }
@@ -191,7 +211,6 @@ function saveScoreToSheets() {
 
 // --- Game Flow & Video Integration ---
 function startCutscene(lvl) {
-    // If ad-blocker broke the API or no video is mapped, skip it automatically
     if (!ytReady || !cutscenes[lvl]) {
         proceedToNextLevel();
         return;
@@ -217,10 +236,8 @@ function endCutscene() {
     proceedToNextLevel();
 }
 
-// Map the skip button click to stop the video
 document.getElementById('skip-btn').addEventListener('click', endCutscene);
 
-// NEW: Separated the board generation logic from the screen transition
 function proceedToNextLevel() {
     level++;
     generateGrid();
@@ -231,7 +248,6 @@ function proceedToNextLevel() {
     }, 1000);
 }
 
-// UPDATED: Now shows LEVEL_TRANSITION screen first, then checks for videos
 function checkLevelComplete() {
     const config = levelConfig[level - 1];
     let factors = getFactors(config.target);
@@ -250,15 +266,12 @@ function checkLevelComplete() {
             playerName = ""; 
             gameState = 'NAME_ENTRY';
         } else {
-            // 1. Show the "LEVEL COMPLETE" screen immediately
             gameState = 'LEVEL_TRANSITION';
-            
-            // 2. Wait 2 seconds for them to read it, THEN check for cutscenes
             setTimeout(() => {
                 if (level === 3 || level === 6 || level === 9) {
-                    startCutscene(level); // Play the video
+                    startCutscene(level); 
                 } else {
-                    proceedToNextLevel(); // Just go to the next level
+                    proceedToNextLevel(); 
                 }
             }, 2000); 
         }
@@ -292,27 +305,48 @@ function checkCollisions() {
     }
 }
 
+// UPDATED: Dynamic offscreen checks and multi-directional marching patterns
 function updateMonsters(timestamp) {
     const config = levelConfig[level - 1];
     let timeUntilNextMove = (lastMonsterMoveTime + config.speed) - timestamp;
+    
     for (let m of monsters) {
-        if (m.x === -1 && !m.warned && timeUntilNextMove <= 1000) { playSpawn(); m.warned = true; }
+        // Sound warning triggers when a monster reaches any immediate outer edge
+        let isAtBorder = (m.x === -1 || m.x === GRID_COLS || m.y === -1 || m.y === GRID_ROWS);
+        if (isAtBorder && !m.warned && timeUntilNextMove <= 1000) { playSpawn(); m.warned = true; }
     }
 
     if (timestamp - lastMonsterMoveTime > config.speed) {
-        for (let m of monsters) {
-            if (m.x < 0) { m.x++; } else {
+        for (let i = 0; i < monsters.length; i++) {
+            let m = monsters[i];
+            let isOffScreen = (m.x < 0 || m.x >= GRID_COLS || m.y < 0 || m.y >= GRID_ROWS);
+            
+            if (isOffScreen) {
+                // March inward using its specialized movement direction
+                m.x += m.dx;
+                m.y += m.dy;
+            } else {
+                // Already inside the grid
                 if (level < 4) {
-                    m.x++; 
-                    if (m.x >= GRID_COLS) { m.x = -1; m.y = Math.floor(Math.random() * GRID_ROWS); m.warned = false; }
+                    // March straight across to the opposite edge
+                    m.x += m.dx;
+                    m.y += m.dy;
+                    // If it exits the board completely, spawn a fresh one at a brand new edge
+                    if (m.x < 0 || m.x >= GRID_COLS || m.y < 0 || m.y >= GRID_ROWS) {
+                        monsters[i] = getRandomSpawn(0); 
+                        m = monsters[i];
+                    }
                 } else {
+                    // Level 4+: Adaptive tracking and random shifting inside grid boundaries
                     let dirs = [{dx:0,dy:-1}, {dx:0,dy:1}, {dx:-1,dy:0}, {dx:1,dy:0}];
                     let validDirs = dirs.filter(d => m.x + d.dx >= 0 && m.x + d.dx < GRID_COLS && m.y + d.dy >= 0 && m.y + d.dy < GRID_ROWS);
                     let move = validDirs[Math.floor(Math.random() * validDirs.length)];
                     m.x += move.dx; m.y += move.dy;
                 }
             }
-            if (m.x >= 0 && m.x < GRID_COLS && gridData[m.y][m.x] !== null) {
+            
+            // Grid munching logic (scrambling squares)
+            if (m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS && gridData[m.y][m.x] !== null) {
                 let totalFactorsLeft = 0;
                 let factors = getFactors(config.target);
                 for (let r = 0; r < GRID_ROWS; r++) {
@@ -355,6 +389,7 @@ function drawTransition() {
     ctx.fillText('LEVEL COMPLETE!', canvas.width / 2, canvas.height / 2);
 }
 
+// (All other UI and rendering states remain fully functional and unchanged below)
 function drawNameEntry() {
     ctx.fillStyle = '#000080'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#FFFF00'; ctx.font = '40px Courier New'; ctx.textAlign = 'center';
@@ -436,7 +471,7 @@ function drawGame() {
     }
     
     for (let m of monsters) {
-        if (m.x >= 0 && m.x < GRID_COLS) {
+        if (m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS) {
             let x = m.x * CELL_WIDTH, y = m.y * CELL_HEIGHT + GRID_OFFSET_Y;
             ctx.drawImage(images.monster, x + 5, y, CELL_WIDTH - 10, CELL_HEIGHT);
         }
