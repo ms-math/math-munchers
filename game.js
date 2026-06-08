@@ -16,7 +16,6 @@ const cutscenes = {
 let ytPlayer;
 let ytReady = false;
 
-// Inject the official YouTube API into the page
 const tag = document.createElement('script');
 tag.src = "https://www.youtube.com/iframe_api";
 const firstScriptTag = document.getElementsByTagName('script')[0];
@@ -46,7 +45,7 @@ function assetLoaded() {
     assetsLoaded++;
     if (assetsLoaded === totalAssets) {
         drawMenu();
-        fetchGlobalLeaderboardsSilent(); // Silently grab scores so we know if they hit Top 5 upon death
+        fetchGlobalLeaderboardsSilent(); 
     }
 }
 images.frog.onload = assetLoaded;
@@ -101,7 +100,7 @@ let gameState = 'MENU';
 let level = 1;
 let score = 0;
 let lives = 3; 
-let entryReason = 'win'; // Tracks if they are entering name for 'win' or 'highscore'
+let entryReason = 'win'; 
 
 let gameStartTime = 0;
 let finalTimeSeconds = 0;
@@ -113,7 +112,6 @@ let deathTime = 0;
 let deathPlayerPos = { x: 0, y: 0 };
 let eatingAnimations = []; 
 
-// 3 Monsters in final two levels
 const levelConfig = [
     { target: 8,   monsters: 1, speed: 2000 }, 
     { target: 10,  monsters: 1, speed: 2000 }, 
@@ -201,7 +199,6 @@ function formatTime(seconds) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-// Silently updates data in the background so the game knows Top 5 scores without interrupting play
 function fetchGlobalLeaderboardsSilent() {
     fetch(SCRIPT_URL)
         .then(res => res.json())
@@ -230,11 +227,15 @@ function saveScoreToSheets() {
     if (entryReason === 'highscore') boardType = 'bestScoreBoard';
 
     gameState = 'LOADING_DATA';
+    
+    // UPDATED: Forced no-cors mode to bypass browser security blocks
     fetch(SCRIPT_URL, { 
         method: 'POST', 
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ name: playerName || "ANON", time: finalTimeSeconds, score: score, boardType: boardType }) 
     })
-    .then(res => res.json()).then(() => fetchGlobalLeaderboards())
+    .then(() => fetchGlobalLeaderboards())
     .catch(() => fetchGlobalLeaderboards());
 }
 
@@ -318,7 +319,6 @@ function handleDeath(reason, num1, num2) {
 
     setTimeout(() => {
         if (lives <= 0) {
-            // Check for High Score Qualification before Game Over
             let isHighScore = false;
             let bestScores = globalLeaderboardData.bestScoreBoard || [];
             if (score > 0 && (bestScores.length < 5 || score > bestScores[bestScores.length - 1].score)) {
@@ -470,7 +470,6 @@ function drawTransition() {
 function drawNameEntry() {
     ctx.fillStyle = '#000080'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Dynamically change the title based on WHY they are entering their name
     if (entryReason === 'highscore') {
         ctx.fillStyle = '#FF00FF'; ctx.font = '40px Courier New'; ctx.textAlign = 'center';
         ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, 100);
@@ -507,7 +506,6 @@ function drawLeaderboards() {
     ctx.fillStyle = '#FFF'; ctx.font = '30px Courier New'; ctx.textAlign = 'center';
     ctx.fillText('GLOBAL HALL OF FAME', canvas.width / 2, 50);
     
-    // Top Left: Immaculate
     ctx.font = '20px Courier New';
     ctx.fillStyle = '#FFFF00'; ctx.fillText('IMMACULATE (3 Lives)', canvas.width / 4, 100);
     ctx.fillStyle = '#FFF';
@@ -517,7 +515,6 @@ function drawLeaderboards() {
         ctx.fillText(text, canvas.width / 4, 140 + (i * 30));
     }
     
-    // Top Right: General Clear
     ctx.fillStyle = '#00FF00'; ctx.fillText('GENERAL CLEAR', (canvas.width / 4) * 3, 100);
     ctx.fillStyle = '#FFF';
     for (let i = 0; i < 5; i++) {
@@ -526,7 +523,6 @@ function drawLeaderboards() {
         ctx.fillText(text, (canvas.width / 4) * 3, 140 + (i * 30));
     }
 
-    // Bottom Center: Best Score
     ctx.fillStyle = '#FF00FF'; ctx.fillText('BEST SCORES', canvas.width / 2, 330);
     ctx.fillStyle = '#FFF';
     for (let i = 0; i < 5; i++) {
@@ -578,7 +574,6 @@ function drawGame() {
     
     for (let m of monsters) {
         if (m.state === 'active') {
-            // FIX: Only draw the monster if it is inside the grid boundaries
             if (m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS) {
                 let x = m.x * CELL_WIDTH, y = m.y * CELL_HEIGHT + GRID_OFFSET_Y;
                 ctx.drawImage(images.monster, x + 5, y, CELL_WIDTH - 10, CELL_HEIGHT);
@@ -636,7 +631,7 @@ function gameLoop(timestamp) {
     else if (gameState === 'LEADERBOARD') drawLeaderboards();
     else if (gameState === 'GAME_OVER') drawGameOver();
     else if (gameState === 'PAUSED') drawPause();
-    else if (gameState === 'CUTSCENE') { /* Wait for video */ } 
+    else if (gameState === 'CUTSCENE') { /* Wait */ } 
     else if (gameState === 'BOARD_REVEAL' || gameState === 'PLAYER_DIED') drawGame(); 
     else if (gameState === 'PLAYING') { updateMonsters(timestamp); drawGame(); }
     requestAnimationFrame(gameLoop);
@@ -650,9 +645,17 @@ window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' || e.key === 'Enter') endCutscene();
         return; 
     }
+
+    // UPDATED: Placed Name Entry logic at the very top so no hotkeys (M/P) override your typing
+    if (gameState === 'NAME_ENTRY') {
+        if (e.key === 'Enter' && playerName.length > 0) saveScoreToSheets();
+        else if (e.key === 'Backspace') playerName = playerName.slice(0, -1);
+        else if (e.key.length === 1 && playerName.length < 8 && /[a-zA-Z0-9]/.test(e.key)) playerName += e.key.toUpperCase();
+        return;
+    }
     
     if(["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].indexOf(e.code) > -1) {
-        if (gameState !== 'NAME_ENTRY') e.preventDefault();
+        e.preventDefault();
     }
 
     if (e.key === 'm' || e.key === 'M') { isMuted = !isMuted; return; }
@@ -665,13 +668,6 @@ window.addEventListener('keydown', (e) => {
 
     if (gameState === 'MENU' && (e.key === 'l' || e.key === 'L')) { fetchGlobalLeaderboards(); return; }
     if (gameState === 'LEADERBOARD') { if (e.key === 'Enter') gameState = 'MENU'; return; }
-
-    if (gameState === 'NAME_ENTRY') {
-        if (e.key === 'Enter' && playerName.length > 0) saveScoreToSheets();
-        else if (e.key === 'Backspace') playerName = playerName.slice(0, -1);
-        else if (e.key.length === 1 && playerName.length < 8 && /[a-zA-Z0-9]/.test(e.key)) playerName += e.key.toUpperCase();
-        return;
-    }
 
     if (e.key === 'p' || e.key === 'P') {
         if (gameState === 'PLAYING') { gameState = 'PAUSED'; pausedAt = performance.now(); } 
