@@ -8,9 +8,9 @@ images.monster.src = 'images/monster.png';
 
 // --- YOUTUBE CUTSCENE CONFIGURATION ---
 const cutscenes = {
-    3: { id: 'z-o8T5K2eD0', start: 35, end: 55 }, // Plays after Level 3
-    6: { id: 'z-o8T5K2eD0', start: 67, end: 83 }, // Plays after Level 6
-    9: { id: 'z-o8T5K2eD0', start: 126, end: 150 }  // Plays after Level 9
+    3: { id: 'z-o8T5K2eD0', start: 35, end: 55 }, 
+    6: { id: 'z-o8T5K2eD0', start: 67, end: 83 }, 
+    9: { id: 'z-o8T5K2eD0', start: 126, end: 150 }  
 };
 
 let ytPlayer;
@@ -44,7 +44,10 @@ let assetsLoaded = 0;
 const totalAssets = 2; 
 function assetLoaded() {
     assetsLoaded++;
-    if (assetsLoaded === totalAssets) drawMenu();
+    if (assetsLoaded === totalAssets) {
+        drawMenu();
+        fetchGlobalLeaderboardsSilent(); // Silently grab scores so we know if they hit Top 5 upon death
+    }
 }
 images.frog.onload = assetLoaded;
 images.monster.onload = assetLoaded;
@@ -75,6 +78,10 @@ function playTone(frequency, type, duration) {
 function playMunch() { playTone(880, 'square', 0.1); } 
 function playWrong() { playTone(150, 'sawtooth', 0.4); } 
 function playSpawn() { playTone(300, 'square', 0.2); } 
+function playChomp() { 
+    playTone(200, 'sawtooth', 0.2); 
+    setTimeout(() => playTone(150, 'sawtooth', 0.2), 100); 
+}
 function playLevelComplete() {
     playTone(440, 'square', 0.1);
     setTimeout(() => playTone(554, 'square', 0.1), 100);
@@ -94,16 +101,19 @@ let gameState = 'MENU';
 let level = 1;
 let score = 0;
 let lives = 3; 
+let entryReason = 'win'; // Tracks if they are entering name for 'win' or 'highscore'
 
 let gameStartTime = 0;
 let finalTimeSeconds = 0;
 let playerName = "";
-let globalLeaderboardData = { immaculateBoard: [], generalBoard: [] };
+let globalLeaderboardData = { immaculateBoard: [], generalBoard: [], bestScoreBoard: [] };
 
 let deathMessage = "";
 let deathTime = 0;
 let deathPlayerPos = { x: 0, y: 0 };
+let eatingAnimations = []; 
 
+// UPDATED: 3 Monsters in final two levels
 const levelConfig = [
     { target: 8,   monsters: 1, speed: 2000 }, 
     { target: 10,  monsters: 1, speed: 2000 }, 
@@ -111,8 +121,8 @@ const levelConfig = [
     { target: 24,  monsters: 2, speed: 1000 }, 
     { target: 36,  monsters: 2, speed: 1000 }, 
     { target: 48,  monsters: 2, speed: 1000 }, 
-    { target: 60,  monsters: 3, speed: 500  }, 
-    { target: 72,  monsters: 3, speed: 500  }, 
+    { target: 60,  monsters: 2, speed: 500  }, 
+    { target: 72,  monsters: 2, speed: 500  }, 
     { target: 90,  monsters: 3, speed: 500  }, 
     { target: 100, monsters: 3, speed: 500  }  
 ];
@@ -155,25 +165,22 @@ function generateGrid() {
     resetEntities();
 }
 
-// NEW: Generates multi-directional spawns and straight paths for entry
 function getRandomSpawn(index) {
     if (level === 1) {
-        // Level 1: Always come from the left edge
-        return { x: -1 - (index * 2), y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0, warned: false };
+        return { x: -1 - (index * 2), y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0, warned: false, state: 'active' };
     }
 
-    // Level 2+: Randomize between Left (0), Right (1), Top (2), or Bottom (3)
     const side = Math.floor(Math.random() * 4);
     const stagger = index * 2;
 
-    if (side === 0) { // From Left
-        return { x: -1 - stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0, warned: false };
-    } else if (side === 1) { // From Right
-        return { x: GRID_COLS + stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: -1, dy: 0, warned: false };
-    } else if (side === 2) { // From Top
-        return { x: Math.floor(Math.random() * GRID_COLS), y: -1 - stagger, dx: 0, dy: 1, warned: false };
-    } else { // From Bottom
-        return { x: Math.floor(Math.random() * GRID_COLS), y: GRID_ROWS + stagger, dx: 0, dy: -1, warned: false };
+    if (side === 0) { 
+        return { x: -1 - stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0, warned: false, state: 'active' };
+    } else if (side === 1) { 
+        return { x: GRID_COLS + stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: -1, dy: 0, warned: false, state: 'active' };
+    } else if (side === 2) { 
+        return { x: Math.floor(Math.random() * GRID_COLS), y: -1 - stagger, dx: 0, dy: 1, warned: false, state: 'active' };
+    } else { 
+        return { x: Math.floor(Math.random() * GRID_COLS), y: GRID_ROWS + stagger, dx: 0, dy: -1, warned: false, state: 'active' };
     }
 }
 
@@ -184,6 +191,7 @@ function resetEntities() {
         monsters.push(getRandomSpawn(i));
     }
     player = { x: 2, y: 2 };
+    eatingAnimations = [];
 }
 
 // --- Leaderboard Sync Logic ---
@@ -193,18 +201,39 @@ function formatTime(seconds) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+// Silently updates data in the background so the game knows Top 5 scores without interrupting play
+function fetchGlobalLeaderboardsSilent() {
+    fetch(SCRIPT_URL)
+        .then(res => res.json())
+        .then(data => { 
+            if (!data.bestScoreBoard) data.bestScoreBoard = []; 
+            globalLeaderboardData = data; 
+        })
+        .catch(err => console.error("Silent API error", err));
+}
+
 function fetchGlobalLeaderboards() {
     gameState = 'LOADING_DATA';
     fetch(SCRIPT_URL)
         .then(res => res.json())
-        .then(data => { globalLeaderboardData = data; gameState = 'LEADERBOARD'; })
+        .then(data => { 
+            if (!data.bestScoreBoard) data.bestScoreBoard = [];
+            globalLeaderboardData = data; 
+            gameState = 'LEADERBOARD'; 
+        })
         .catch(err => { console.error("API error", err); gameState = 'LEADERBOARD'; });
 }
 
 function saveScoreToSheets() {
-    let boardType = lives === 3 ? 'immaculateBoard' : 'generalBoard';
+    let boardType = 'generalBoard';
+    if (entryReason === 'win' && lives === 3) boardType = 'immaculateBoard';
+    if (entryReason === 'highscore') boardType = 'bestScoreBoard';
+
     gameState = 'LOADING_DATA';
-    fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ name: playerName || "ANON", time: finalTimeSeconds, boardType: boardType }) })
+    fetch(SCRIPT_URL, { 
+        method: 'POST', 
+        body: JSON.stringify({ name: playerName || "ANON", time: finalTimeSeconds, score: score, boardType: boardType }) 
+    })
     .then(res => res.json()).then(() => fetchGlobalLeaderboards())
     .catch(() => fetchGlobalLeaderboards());
 }
@@ -264,6 +293,7 @@ function checkLevelComplete() {
         if (level >= 10) {
             finalTimeSeconds = Math.floor((performance.now() - gameStartTime) / 1000);
             playerName = ""; 
+            entryReason = 'win';
             gameState = 'NAME_ENTRY';
         } else {
             gameState = 'LEVEL_TRANSITION';
@@ -288,8 +318,22 @@ function handleDeath(reason, num1, num2) {
 
     setTimeout(() => {
         if (lives <= 0) {
-            gameState = 'GAME_OVER';
-            setTimeout(() => { gameState = 'MENU'; lives = 3; score = 0; level = 1; }, 3000);
+            // NEW: Check for High Score Qualification before Game Over
+            let isHighScore = false;
+            let bestScores = globalLeaderboardData.bestScoreBoard || [];
+            if (score > 0 && (bestScores.length < 5 || score > bestScores[bestScores.length - 1].score)) {
+                isHighScore = true;
+            }
+
+            if (isHighScore) {
+                playerName = "";
+                entryReason = 'highscore';
+                finalTimeSeconds = Math.floor((performance.now() - gameStartTime) / 1000);
+                gameState = 'NAME_ENTRY';
+            } else {
+                gameState = 'GAME_OVER';
+                setTimeout(() => { gameState = 'MENU'; lives = 3; score = 0; level = 1; }, 3000);
+            }
         } else {
             resetEntities();
             gameState = 'PLAYING';
@@ -298,55 +342,71 @@ function handleDeath(reason, num1, num2) {
     }, 2000);
 }
 
-// --- Collision & Update ---
 function checkCollisions() {
     for (let m of monsters) {
-        if (m.x === player.x && m.y === player.y) { handleDeath('eaten'); return; }
+        if (m.state === 'active' && m.x === player.x && m.y === player.y) { handleDeath('eaten'); return; }
     }
 }
 
-// UPDATED: Dynamic offscreen checks and multi-directional marching patterns
+// --- Monster AI & Updates ---
 function updateMonsters(timestamp) {
     const config = levelConfig[level - 1];
     let timeUntilNextMove = (lastMonsterMoveTime + config.speed) - timestamp;
     
-    for (let m of monsters) {
-        // Sound warning triggers when a monster reaches any immediate outer edge
-        let isAtBorder = (m.x === -1 || m.x === GRID_COLS || m.y === -1 || m.y === GRID_ROWS);
-        if (isAtBorder && !m.warned && timeUntilNextMove <= 1000) { playSpawn(); m.warned = true; }
+    for (let i = 0; i < monsters.length; i++) {
+        let m = monsters[i];
+        if (m.state === 'respawning' && timestamp > m.respawnTime) {
+            let newSpawn = getRandomSpawn(0);
+            m.x = newSpawn.x; m.y = newSpawn.y;
+            m.dx = newSpawn.dx; m.dy = newSpawn.dy;
+            m.state = 'active'; m.warned = false;
+        } else if (m.state === 'active') {
+            let isAtBorder = (m.x === -1 || m.x === GRID_COLS || m.y === -1 || m.y === GRID_ROWS);
+            if (isAtBorder && !m.warned && timeUntilNextMove <= 1000) { playSpawn(); m.warned = true; }
+        }
     }
 
     if (timestamp - lastMonsterMoveTime > config.speed) {
         for (let i = 0; i < monsters.length; i++) {
             let m = monsters[i];
+            if (m.state !== 'active') continue;
+
             let isOffScreen = (m.x < 0 || m.x >= GRID_COLS || m.y < 0 || m.y >= GRID_ROWS);
             
             if (isOffScreen) {
-                // March inward using its specialized movement direction
                 m.x += m.dx;
                 m.y += m.dy;
+                if (m.x < -1 || m.x > GRID_COLS || m.y < -1 || m.y > GRID_ROWS) {
+                    m.state = 'respawning';
+                    m.respawnTime = timestamp + 1000 + Math.random() * 2000;
+                }
             } else {
-                // Already inside the grid
                 if (level < 4) {
-                    // March straight across to the opposite edge
                     m.x += m.dx;
                     m.y += m.dy;
-                    // If it exits the board completely, spawn a fresh one at a brand new edge
                     if (m.x < 0 || m.x >= GRID_COLS || m.y < 0 || m.y >= GRID_ROWS) {
-                        monsters[i] = getRandomSpawn(0); 
-                        m = monsters[i];
+                        m.state = 'respawning';
+                        m.respawnTime = timestamp + 1000 + Math.random() * 2000;
                     }
                 } else {
-                    // Level 4+: Adaptive tracking and random shifting inside grid boundaries
                     let dirs = [{dx:0,dy:-1}, {dx:0,dy:1}, {dx:-1,dy:0}, {dx:1,dy:0}];
-                    let validDirs = dirs.filter(d => m.x + d.dx >= 0 && m.x + d.dx < GRID_COLS && m.y + d.dy >= 0 && m.y + d.dy < GRID_ROWS);
-                    let move = validDirs[Math.floor(Math.random() * validDirs.length)];
+                    let leaveDirs = dirs.filter(d => m.x + d.dx < 0 || m.x + d.dx >= GRID_COLS || m.y + d.dy < 0 || m.y + d.dy >= GRID_ROWS);
+                    let stayDirs = dirs.filter(d => m.x + d.dx >= 0 && m.x + d.dx < GRID_COLS && m.y + d.dy >= 0 && m.y + d.dy < GRID_ROWS);
+                    
+                    let move;
+                    if (leaveDirs.length > 0 && Math.random() < 0.1) move = leaveDirs[Math.floor(Math.random() * leaveDirs.length)];
+                    else move = stayDirs[Math.floor(Math.random() * stayDirs.length)];
+                    
                     m.x += move.dx; m.y += move.dy;
+                    
+                    if (m.x < 0 || m.x >= GRID_COLS || m.y < 0 || m.y >= GRID_ROWS) {
+                        m.dx = move.dx;
+                        m.dy = move.dy;
+                    }
                 }
             }
             
-            // Grid munching logic (scrambling squares)
-            if (m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS && gridData[m.y][m.x] !== null) {
+            if (m.state === 'active' && m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS && gridData[m.y][m.x] !== null) {
                 let totalFactorsLeft = 0;
                 let factors = getFactors(config.target);
                 for (let r = 0; r < GRID_ROWS; r++) {
@@ -361,6 +421,24 @@ function updateMonsters(timestamp) {
                 }
             }
         }
+        
+        for (let i = 0; i < monsters.length; i++) {
+            for (let j = i + 1; j < monsters.length; j++) {
+                let m1 = monsters[i];
+                let m2 = monsters[j];
+                if (m1.state === 'active' && m2.state === 'active' && 
+                    m1.x === m2.x && m1.y === m2.y && 
+                    m1.x >= 0 && m1.x < GRID_COLS && m1.y >= 0 && m1.y < GRID_ROWS) {
+                    
+                    m2.state = 'respawning';
+                    m2.respawnTime = timestamp + 3000 + Math.random() * 2000; 
+                    
+                    eatingAnimations.push({ x: m1.x, y: m1.y, expires: timestamp + 500 });
+                    playChomp();
+                }
+            }
+        }
+
         checkCollisions();
         lastMonsterMoveTime = timestamp;
     }
@@ -389,15 +467,28 @@ function drawTransition() {
     ctx.fillText('LEVEL COMPLETE!', canvas.width / 2, canvas.height / 2);
 }
 
-// (All other UI and rendering states remain fully functional and unchanged below)
 function drawNameEntry() {
     ctx.fillStyle = '#000080'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#FFFF00'; ctx.font = '40px Courier New'; ctx.textAlign = 'center';
-    ctx.fillText('YOU WIN!', canvas.width / 2, 100);
-    ctx.fillStyle = '#FFF'; ctx.font = '20px Courier New';
-    ctx.fillText(`Final Time: ${formatTime(finalTimeSeconds)}`, canvas.width / 2, 150);
-    ctx.fillText(`Lives Remaining: ${lives}`, canvas.width / 2, 180);
-    ctx.fillStyle = '#00FF00'; ctx.fillText('ENTER YOUR NAME (Max 8 letters):', canvas.width / 2, 280);
+    
+    // UPDATED: Dynamically change the title based on WHY they are entering their name
+    if (entryReason === 'highscore') {
+        ctx.fillStyle = '#FF00FF'; ctx.font = '40px Courier New'; ctx.textAlign = 'center';
+        ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, 100);
+        ctx.fillStyle = '#FFF'; ctx.font = '20px Courier New';
+        ctx.fillText(`You reached Level ${level}`, canvas.width / 2, 140);
+    } else {
+        ctx.fillStyle = '#FFFF00'; ctx.font = '40px Courier New'; ctx.textAlign = 'center';
+        ctx.fillText('YOU WIN!', canvas.width / 2, 100);
+        ctx.fillStyle = '#FFF'; ctx.font = '20px Courier New';
+        ctx.fillText(`Final Time: ${formatTime(finalTimeSeconds)}`, canvas.width / 2, 140);
+        ctx.fillText(`Lives Remaining: ${lives}`, canvas.width / 2, 170);
+    }
+
+    ctx.fillStyle = '#00FFFF'; ctx.font = '24px Courier New';
+    ctx.fillText(`Final Score: ${score}`, canvas.width / 2, 220);
+
+    ctx.fillStyle = '#00FF00'; ctx.font = '20px Courier New'; 
+    ctx.fillText('ENTER YOUR NAME (Max 8 letters):', canvas.width / 2, 280);
     ctx.strokeStyle = '#FFF'; ctx.strokeRect(canvas.width / 2 - 100, 310, 200, 50);
     ctx.fillStyle = '#FFF'; ctx.font = '30px Courier New';
     ctx.fillText(playerName + (Math.floor(Date.now() / 500) % 2 === 0 ? '_' : ''), canvas.width / 2, 345);
@@ -415,23 +506,37 @@ function drawLeaderboards() {
     ctx.fillStyle = '#000080'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#FFF'; ctx.font = '30px Courier New'; ctx.textAlign = 'center';
     ctx.fillText('GLOBAL HALL OF FAME', canvas.width / 2, 50);
+    
+    // Top Left: Immaculate
     ctx.font = '20px Courier New';
-    ctx.fillStyle = '#FFFF00'; ctx.fillText('IMMACULATE (3 Lives)', canvas.width / 4, 120);
+    ctx.fillStyle = '#FFFF00'; ctx.fillText('IMMACULATE (3 Lives)', canvas.width / 4, 100);
     ctx.fillStyle = '#FFF';
     for (let i = 0; i < 5; i++) {
         let entry = globalLeaderboardData.immaculateBoard[i];
         let text = entry ? `${i+1}. ${entry.name.padEnd(8, ' ')} - ${formatTime(entry.time)}` : `${i+1}. ---`;
-        ctx.fillText(text, canvas.width / 4, 160 + (i * 40));
+        ctx.fillText(text, canvas.width / 4, 140 + (i * 30));
     }
-    ctx.fillStyle = '#00FF00'; ctx.fillText('GENERAL CLEAR', (canvas.width / 4) * 3, 120);
+    
+    // Top Right: General Clear
+    ctx.fillStyle = '#00FF00'; ctx.fillText('GENERAL CLEAR', (canvas.width / 4) * 3, 100);
     ctx.fillStyle = '#FFF';
     for (let i = 0; i < 5; i++) {
         let entry = globalLeaderboardData.generalBoard[i];
         let text = entry ? `${i+1}. ${entry.name.padEnd(8, ' ')} - ${formatTime(entry.time)}` : `${i+1}. ---`;
-        ctx.fillText(text, (canvas.width / 4) * 3, 160 + (i * 40));
+        ctx.fillText(text, (canvas.width / 4) * 3, 140 + (i * 30));
     }
+
+    // Bottom Center: Best Score
+    ctx.fillStyle = '#FF00FF'; ctx.fillText('BEST SCORES', canvas.width / 2, 330);
+    ctx.fillStyle = '#FFF';
+    for (let i = 0; i < 5; i++) {
+        let entry = (globalLeaderboardData.bestScoreBoard && globalLeaderboardData.bestScoreBoard[i]) ? globalLeaderboardData.bestScoreBoard[i] : null;
+        let text = entry ? `${i+1}. ${entry.name.padEnd(8, ' ')} - ${entry.score} PTS` : `${i+1}. ---`;
+        ctx.fillText(text, canvas.width / 2, 370 + (i * 30));
+    }
+
     ctx.fillStyle = '#AAA'; ctx.font = '16px Courier New';
-    ctx.fillText('Press ENTER to return', canvas.width / 2, canvas.height - 50);
+    ctx.fillText('Press ENTER to return', canvas.width / 2, canvas.height - 30);
 }
 
 function drawGameOver() {
@@ -450,6 +555,7 @@ function drawPause() {
 
 function drawGame() {
     const config = levelConfig[level - 1];
+    let currentTime = performance.now();
     ctx.fillStyle = '#000080'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     
     ctx.fillStyle = '#FFF'; ctx.font = '20px Courier New'; ctx.textAlign = 'left';
@@ -471,10 +577,23 @@ function drawGame() {
     }
     
     for (let m of monsters) {
-        if (m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS) {
+        if (m.state === 'active') {
             let x = m.x * CELL_WIDTH, y = m.y * CELL_HEIGHT + GRID_OFFSET_Y;
             ctx.drawImage(images.monster, x + 5, y, CELL_WIDTH - 10, CELL_HEIGHT);
         }
+    }
+
+    eatingAnimations = eatingAnimations.filter(anim => currentTime < anim.expires);
+    for (let anim of eatingAnimations) {
+        let x = anim.x * CELL_WIDTH, y = anim.y * CELL_HEIGHT + GRID_OFFSET_Y;
+        ctx.save();
+        ctx.translate(x + CELL_WIDTH/2, y + CELL_HEIGHT/2);
+        let scale = 1 + (anim.expires - currentTime) / 500; 
+        ctx.scale(scale, scale);
+        ctx.drawImage(images.monster, -CELL_WIDTH/2 + 5, -CELL_HEIGHT/2, CELL_WIDTH - 10, CELL_HEIGHT);
+        ctx.fillStyle = '#FF0000'; ctx.font = 'bold 20px Courier New'; ctx.textAlign = 'center';
+        ctx.fillText('CHOMP!', 0, -CELL_HEIGHT/2 - 5);
+        ctx.restore();
     }
     
     ctx.fillStyle = '#FFF'; ctx.textAlign = 'left'; ctx.font = '20px Courier New';
@@ -491,7 +610,7 @@ function drawGame() {
     
     if (gameState === 'PLAYER_DIED') {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-        let progress = Math.min((performance.now() - deathTime) / 1000, 1); 
+        let progress = Math.min((currentTime - deathTime) / 1000, 1); 
         let cx = deathPlayerPos.x * CELL_WIDTH + CELL_WIDTH / 2;
         let cy = deathPlayerPos.y * CELL_HEIGHT + GRID_OFFSET_Y + CELL_HEIGHT / 2;
         ctx.save(); ctx.translate(cx, cy); ctx.rotate(progress * Math.PI * 6); 
