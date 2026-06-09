@@ -94,7 +94,8 @@ const CELL_WIDTH = 100;
 const CELL_HEIGHT = 80;
 const GRID_OFFSET_Y = 100; 
 
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxDCG5H7gPQ7cXVIzTDY2KK0w5qrzO7sdUjH0S5JMOU11Cp64SaYuRXd8nmWFKmeRbr/exec'; 
+// IMPORTANT: Paste your newly generated Apps Script Web App URL right here!
+const SCRIPT_URL = 'PASTE_YOUR_NEW_WEB_APP_URL_HERE'; 
 
 let gameState = 'MENU'; 
 let level = 1;
@@ -126,6 +127,7 @@ const levelConfig = [
 ];
 
 let player = { x: 2, y: 2 }; 
+let safeCell = { x: -1, y: -1, nextMoveTime: 0 }; // NEW: Safe cell tracker
 let gridData = []; 
 let monsters = [];
 let lastMonsterMoveTime = 0;
@@ -164,22 +166,18 @@ function generateGrid() {
 }
 
 function getRandomSpawn(index) {
+    let spawn = { x: 0, y: 0, dx: 0, dy: 0 };
     if (level === 1) {
-        return { x: -1 - (index * 2), y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0, warned: false, state: 'active' };
+        spawn = { x: -1 - (index * 2), y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0 };
+    } else {
+        const side = Math.floor(Math.random() * 4);
+        const stagger = index * 2;
+        if (side === 0) spawn = { x: -1 - stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0 };
+        else if (side === 1) spawn = { x: GRID_COLS + stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: -1, dy: 0 };
+        else if (side === 2) spawn = { x: Math.floor(Math.random() * GRID_COLS), y: -1 - stagger, dx: 0, dy: 1 };
+        else spawn = { x: Math.floor(Math.random() * GRID_COLS), y: GRID_ROWS + stagger, dx: 0, dy: -1 };
     }
-
-    const side = Math.floor(Math.random() * 4);
-    const stagger = index * 2;
-
-    if (side === 0) { 
-        return { x: -1 - stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: 1, dy: 0, warned: false, state: 'active' };
-    } else if (side === 1) { 
-        return { x: GRID_COLS + stagger, y: Math.floor(Math.random() * GRID_ROWS), dx: -1, dy: 0, warned: false, state: 'active' };
-    } else if (side === 2) { 
-        return { x: Math.floor(Math.random() * GRID_COLS), y: -1 - stagger, dx: 0, dy: 1, warned: false, state: 'active' };
-    } else { 
-        return { x: Math.floor(Math.random() * GRID_COLS), y: GRID_ROWS + stagger, dx: 0, dy: -1, warned: false, state: 'active' };
-    }
+    return { ...spawn, warned: false, state: 'active', prevX: spawn.x, prevY: spawn.y, moveStartTime: performance.now() };
 }
 
 function resetEntities() {
@@ -190,6 +188,10 @@ function resetEntities() {
     }
     player = { x: 2, y: 2 };
     eatingAnimations = [];
+    
+    safeCell.x = Math.floor(Math.random() * GRID_COLS);
+    safeCell.y = Math.floor(Math.random() * GRID_ROWS);
+    safeCell.nextMoveTime = performance.now() + 10000;
 }
 
 // --- Leaderboard Sync Logic ---
@@ -200,6 +202,7 @@ function formatTime(seconds) {
 }
 
 function fetchGlobalLeaderboardsSilent() {
+    if (SCRIPT_URL === 'PASTE_YOUR_NEW_WEB_APP_URL_HERE') return;
     fetch(SCRIPT_URL)
         .then(res => res.json())
         .then(data => { 
@@ -210,6 +213,9 @@ function fetchGlobalLeaderboardsSilent() {
 }
 
 function fetchGlobalLeaderboards() {
+    if (SCRIPT_URL === 'PASTE_YOUR_NEW_WEB_APP_URL_HERE') {
+        gameState = 'LEADERBOARD'; return;
+    }
     gameState = 'LOADING_DATA';
     fetch(SCRIPT_URL)
         .then(res => res.json())
@@ -222,13 +228,15 @@ function fetchGlobalLeaderboards() {
 }
 
 function saveScoreToSheets() {
+    if (SCRIPT_URL === 'PASTE_YOUR_NEW_WEB_APP_URL_HERE') {
+        gameState = 'MENU'; return;
+    }
     let boardType = 'generalBoard';
     if (entryReason === 'win' && lives === 3) boardType = 'immaculateBoard';
     if (entryReason === 'highscore') boardType = 'bestScoreBoard';
 
     gameState = 'LOADING_DATA';
     
-    // UPDATED: Forced no-cors mode to bypass browser security blocks
     fetch(SCRIPT_URL, { 
         method: 'POST', 
         mode: 'no-cors',
@@ -343,8 +351,14 @@ function handleDeath(reason, num1, num2) {
 }
 
 function checkCollisions() {
+    // Player is immune while inside the safe cell
+    if (player.x === safeCell.x && player.y === safeCell.y) return;
+
     for (let m of monsters) {
-        if (m.state === 'active' && m.x === player.x && m.y === player.y) { handleDeath('eaten'); return; }
+        if (m.state === 'active' && m.x === player.x && m.y === player.y) { 
+            handleDeath('eaten'); 
+            return; 
+        }
     }
 }
 
@@ -357,9 +371,8 @@ function updateMonsters(timestamp) {
         let m = monsters[i];
         if (m.state === 'respawning' && timestamp > m.respawnTime) {
             let newSpawn = getRandomSpawn(0);
-            m.x = newSpawn.x; m.y = newSpawn.y;
-            m.dx = newSpawn.dx; m.dy = newSpawn.dy;
-            m.state = 'active'; m.warned = false;
+            Object.assign(m, newSpawn);
+            m.moveStartTime = timestamp;
         } else if (m.state === 'active') {
             let isAtBorder = (m.x === -1 || m.x === GRID_COLS || m.y === -1 || m.y === GRID_ROWS);
             if (isAtBorder && !m.warned && timeUntilNextMove <= 1000) { playSpawn(); m.warned = true; }
@@ -370,6 +383,11 @@ function updateMonsters(timestamp) {
         for (let i = 0; i < monsters.length; i++) {
             let m = monsters[i];
             if (m.state !== 'active') continue;
+
+            // Save previous positions for smooth sliding math
+            m.prevX = m.x;
+            m.prevY = m.y;
+            m.moveStartTime = timestamp;
 
             let isOffScreen = (m.x < 0 || m.x >= GRID_COLS || m.y < 0 || m.y >= GRID_ROWS);
             
@@ -552,6 +570,16 @@ function drawPause() {
 function drawGame() {
     const config = levelConfig[level - 1];
     let currentTime = performance.now();
+
+    // Safe Cell move logic
+    if (gameState === 'PLAYING' && currentTime > safeCell.nextMoveTime) {
+        if (player.x !== safeCell.x || player.y !== safeCell.y) {
+            safeCell.x = Math.floor(Math.random() * GRID_COLS);
+            safeCell.y = Math.floor(Math.random() * GRID_ROWS);
+        }
+        safeCell.nextMoveTime = currentTime + 10000;
+    }
+    
     ctx.fillStyle = '#000080'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     
     ctx.fillStyle = '#FFF'; ctx.font = '20px Courier New'; ctx.textAlign = 'left';
@@ -571,12 +599,53 @@ function drawGame() {
             }
         }
     }
+
+    // Draw Safe Cell Indicator
+    if (safeCell.x >= 0 && safeCell.y >= 0) {
+        let sx = safeCell.x * CELL_WIDTH;
+        let sy = safeCell.y * CELL_HEIGHT + GRID_OFFSET_Y;
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+        ctx.fillRect(sx, sy, CELL_WIDTH, CELL_HEIGHT);
+        ctx.strokeStyle = '#00FF00'; ctx.lineWidth = 4;
+        ctx.strokeRect(sx, sy, CELL_WIDTH, CELL_HEIGHT);
+        ctx.fillStyle = '#00FF00'; ctx.font = 'bold 16px Courier New';
+        ctx.fillText('SAFE', sx + CELL_WIDTH / 2, sy + 20);
+    }
     
+    // Smooth sliding monster logic
     for (let m of monsters) {
         if (m.state === 'active') {
-            if (m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS) {
-                let x = m.x * CELL_WIDTH, y = m.y * CELL_HEIGHT + GRID_OFFSET_Y;
+            let elapsed = currentTime - (m.moveStartTime || currentTime);
+            let slideProgress = Math.min(elapsed / 200, 1); 
+            
+            let visualX = m.prevX + (m.x - m.prevX) * slideProgress;
+            let visualY = m.prevY + (m.y - m.prevY) * slideProgress;
+            
+            if (visualX > -1 && visualX < GRID_COLS && visualY > -1 && visualY < GRID_ROWS) {
+                let x = visualX * CELL_WIDTH;
+                let y = visualY * CELL_HEIGHT + GRID_OFFSET_Y;
                 ctx.drawImage(images.monster, x + 5, y, CELL_WIDTH - 10, CELL_HEIGHT);
+            }
+
+            // Blinking red warning box
+            if (m.warned && (m.x < 0 || m.x >= GRID_COLS || m.y < 0 || m.y >= GRID_ROWS)) {
+                if (Math.floor(currentTime / 200) % 2 === 0) {
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
+                    
+                    let warnX, warnY;
+                    if (m.x < 0) { warnX = 0; warnY = m.y * CELL_HEIGHT + GRID_OFFSET_Y; }
+                    else if (m.x >= GRID_COLS) { warnX = (GRID_COLS - 1) * CELL_WIDTH; warnY = m.y * CELL_HEIGHT + GRID_OFFSET_Y; }
+                    else if (m.y < 0) { warnX = m.x * CELL_WIDTH; warnY = GRID_OFFSET_Y; }
+                    else { warnX = m.x * CELL_WIDTH; warnY = (GRID_ROWS - 1) * CELL_HEIGHT + GRID_OFFSET_Y; }
+                    
+                    warnX = Math.max(0, Math.min(warnX, (GRID_COLS - 1) * CELL_WIDTH));
+                    warnY = Math.max(GRID_OFFSET_Y, Math.min(warnY, (GRID_ROWS - 1) * CELL_HEIGHT + GRID_OFFSET_Y));
+                    
+                    ctx.fillRect(warnX, warnY, CELL_WIDTH, CELL_HEIGHT);
+                    
+                    ctx.fillStyle = '#FFF'; ctx.font = 'bold 30px Courier New';
+                    ctx.fillText('!', warnX + CELL_WIDTH / 2, warnY + CELL_HEIGHT / 2);
+                }
             }
         }
     }
@@ -646,7 +715,6 @@ window.addEventListener('keydown', (e) => {
         return; 
     }
 
-    // UPDATED: Placed Name Entry logic at the very top so no hotkeys (M/P) override your typing
     if (gameState === 'NAME_ENTRY') {
         if (e.key === 'Enter' && playerName.length > 0) saveScoreToSheets();
         else if (e.key === 'Backspace') playerName = playerName.slice(0, -1);
