@@ -95,7 +95,7 @@ const CELL_HEIGHT = 80;
 const GRID_OFFSET_Y = 100; 
 
 // IMPORTANT: Paste your newly generated Apps Script Web App URL right here!
-const SCRIPT_URL = 'PASTE_YOUR_NEW_WEB_APP_URL_HERE'; 
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxDCG5H7gPQ7cXVIzTDY2KK0w5qrzO7sdUjH0S5JMOU11Cp64SaYuRXd8nmWFKmeRbr/exec'; 
 
 let gameState = 'MENU'; 
 let level = 1;
@@ -127,7 +127,7 @@ const levelConfig = [
 ];
 
 let player = { x: 2, y: 2 }; 
-let safeCell = { x: -1, y: -1, nextMoveTime: 0 }; // NEW: Safe cell tracker
+let safeCell = { x: -1, y: -1, nextMoveTime: 0 }; 
 let gridData = []; 
 let monsters = [];
 let lastMonsterMoveTime = 0;
@@ -425,18 +425,28 @@ function updateMonsters(timestamp) {
             }
             
             if (m.state === 'active' && m.x >= 0 && m.x < GRID_COLS && m.y >= 0 && m.y < GRID_ROWS && gridData[m.y][m.x] !== null) {
-                let totalFactorsLeft = 0;
-                let factors = getFactors(config.target);
-                for (let r = 0; r < GRID_ROWS; r++) {
-                    for (let c = 0; c < GRID_COLS; c++) {
-                        if (gridData[r][c] !== null && factors.includes(gridData[r][c])) totalFactorsLeft++;
+                let targetY = m.y;
+                let targetX = m.x;
+                
+                // NEW: Wait 200ms for the slide animation to finish before scrambling the number!
+                setTimeout(() => {
+                    // Check if game is still active and the cell hasn't been munched by the player
+                    if (gameState === 'PLAYING' && gridData[targetY] && gridData[targetY][targetX] !== null) {
+                        let totalFactorsLeft = 0;
+                        let factors = getFactors(config.target);
+                        for (let r = 0; r < GRID_ROWS; r++) {
+                            for (let c = 0; c < GRID_COLS; c++) {
+                                if (gridData[r][c] !== null && factors.includes(gridData[r][c])) totalFactorsLeft++;
+                            }
+                        }
+                        
+                        if (totalFactorsLeft === 1 && factors.includes(gridData[targetY][targetX])) {
+                            gridData[targetY][targetX] = factors[Math.floor(Math.random() * factors.length)];
+                        } else {
+                            randomizeCell(targetY, targetX);
+                        }
                     }
-                }
-                if (totalFactorsLeft === 1 && factors.includes(gridData[m.y][m.x])) {
-                    gridData[m.y][m.x] = factors[Math.floor(Math.random() * factors.length)];
-                } else {
-                    randomizeCell(m.y, m.x);
-                }
+                }, 200);
             }
         }
         
@@ -625,27 +635,6 @@ function drawGame() {
                 let x = visualX * CELL_WIDTH;
                 let y = visualY * CELL_HEIGHT + GRID_OFFSET_Y;
                 ctx.drawImage(images.monster, x + 5, y, CELL_WIDTH - 10, CELL_HEIGHT);
-            }
-
-            // Blinking red warning box
-            if (m.warned && (m.x < 0 || m.x >= GRID_COLS || m.y < 0 || m.y >= GRID_ROWS)) {
-                if (Math.floor(currentTime / 200) % 2 === 0) {
-                    ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
-                    
-                    let warnX, warnY;
-                    if (m.x < 0) { warnX = 0; warnY = m.y * CELL_HEIGHT + GRID_OFFSET_Y; }
-                    else if (m.x >= GRID_COLS) { warnX = (GRID_COLS - 1) * CELL_WIDTH; warnY = m.y * CELL_HEIGHT + GRID_OFFSET_Y; }
-                    else if (m.y < 0) { warnX = m.x * CELL_WIDTH; warnY = GRID_OFFSET_Y; }
-                    else { warnX = m.x * CELL_WIDTH; warnY = (GRID_ROWS - 1) * CELL_HEIGHT + GRID_OFFSET_Y; }
-                    
-                    warnX = Math.max(0, Math.min(warnX, (GRID_COLS - 1) * CELL_WIDTH));
-                    warnY = Math.max(GRID_OFFSET_Y, Math.min(warnY, (GRID_ROWS - 1) * CELL_HEIGHT + GRID_OFFSET_Y));
-                    
-                    ctx.fillRect(warnX, warnY, CELL_WIDTH, CELL_HEIGHT);
-                    
-                    ctx.fillStyle = '#FFF'; ctx.font = 'bold 30px Courier New';
-                    ctx.fillText('!', warnX + CELL_WIDTH / 2, warnY + CELL_HEIGHT / 2);
-                }
             }
         }
     }
