@@ -94,7 +94,7 @@ const CELL_WIDTH = 100;
 const CELL_HEIGHT = 80;
 const GRID_OFFSET_Y = 100; 
 
-// IMPORTANT: Paste your newly generated Apps Script Web App URL right here!
+// UPDATED URL
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxDCG5H7gPQ7cXVIzTDY2KK0w5qrzO7sdUjH0S5JMOU11Cp64SaYuRXd8nmWFKmeRbr/exec'; 
 
 let gameState = 'MENU'; 
@@ -126,7 +126,8 @@ const levelConfig = [
     { target: 100, monsters: 3, speed: 500  }  
 ];
 
-let player = { x: 2, y: 2 }; 
+// Added tracking for smooth player movement
+let player = { x: 2, y: 2, prevX: 2, prevY: 2, moveStartTime: 0 }; 
 let safeCell = { x: -1, y: -1, nextMoveTime: 0 }; 
 let gridData = []; 
 let monsters = [];
@@ -186,7 +187,7 @@ function resetEntities() {
     for (let i = 0; i < config.monsters; i++) {
         monsters.push(getRandomSpawn(i));
     }
-    player = { x: 2, y: 2 };
+    player = { x: 2, y: 2, prevX: 2, prevY: 2, moveStartTime: 0 };
     eatingAnimations = [];
     
     safeCell.x = Math.floor(Math.random() * GRID_COLS);
@@ -202,7 +203,6 @@ function formatTime(seconds) {
 }
 
 function fetchGlobalLeaderboardsSilent() {
-    if (SCRIPT_URL === 'PASTE_YOUR_NEW_WEB_APP_URL_HERE') return;
     fetch(SCRIPT_URL)
         .then(res => res.json())
         .then(data => { 
@@ -213,9 +213,6 @@ function fetchGlobalLeaderboardsSilent() {
 }
 
 function fetchGlobalLeaderboards() {
-    if (SCRIPT_URL === 'PASTE_YOUR_NEW_WEB_APP_URL_HERE') {
-        gameState = 'LEADERBOARD'; return;
-    }
     gameState = 'LOADING_DATA';
     fetch(SCRIPT_URL)
         .then(res => res.json())
@@ -228,9 +225,6 @@ function fetchGlobalLeaderboards() {
 }
 
 function saveScoreToSheets() {
-    if (SCRIPT_URL === 'PASTE_YOUR_NEW_WEB_APP_URL_HERE') {
-        gameState = 'MENU'; return;
-    }
     let boardType = 'generalBoard';
     if (entryReason === 'win' && lives === 3) boardType = 'immaculateBoard';
     if (entryReason === 'highscore') boardType = 'bestScoreBoard';
@@ -428,9 +422,7 @@ function updateMonsters(timestamp) {
                 let targetY = m.y;
                 let targetX = m.x;
                 
-                // NEW: Wait 200ms for the slide animation to finish before scrambling the number!
                 setTimeout(() => {
-                    // Check if game is still active and the cell hasn't been munched by the player
                     if (gameState === 'PLAYING' && gridData[targetY] && gridData[targetY][targetX] !== null) {
                         let totalFactorsLeft = 0;
                         let factors = getFactors(config.target);
@@ -596,6 +588,7 @@ function drawGame() {
     ctx.fillText(`Level: ${level}`, 20, 40); ctx.textAlign = 'center';
     ctx.fillText(`Factors of ${config.target}`, canvas.width / 2, 40);
     
+    // Draw grid lines and numbers
     ctx.strokeStyle = '#FF00FF'; ctx.lineWidth = 2; ctx.textBaseline = 'middle';
     for (let r = 0; r < GRID_ROWS; r++) {
         for (let c = 0; c < GRID_COLS; c++) {
@@ -604,22 +597,39 @@ function drawGame() {
             if (gridData[r][c] !== null) {
                 ctx.fillStyle = '#FFF'; ctx.fillText(gridData[r][c], x + CELL_WIDTH / 2, y + CELL_HEIGHT / 2);
             }
-            if (player.x === c && player.y === r && gameState !== 'PLAYER_DIED') {
-                ctx.drawImage(images.frog, x + 10, y + 5, CELL_WIDTH - 20, CELL_HEIGHT - 10);
-            }
         }
     }
 
-    // Draw Safe Cell Indicator
+    // UPDATED: Draw Safe Cell Indicator adapted to level
     if (safeCell.x >= 0 && safeCell.y >= 0) {
         let sx = safeCell.x * CELL_WIDTH;
         let sy = safeCell.y * CELL_HEIGHT + GRID_OFFSET_Y;
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
-        ctx.fillRect(sx, sy, CELL_WIDTH, CELL_HEIGHT);
-        ctx.strokeStyle = '#00FF00'; ctx.lineWidth = 4;
-        ctx.strokeRect(sx, sy, CELL_WIDTH, CELL_HEIGHT);
-        ctx.fillStyle = '#00FF00'; ctx.font = 'bold 16px Courier New';
-        ctx.fillText('SAFE', sx + CELL_WIDTH / 2, sy + 20);
+        
+        if (level === 1) {
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+            ctx.fillRect(sx, sy, CELL_WIDTH, CELL_HEIGHT);
+            ctx.strokeStyle = '#00FF00'; ctx.lineWidth = 4;
+            ctx.strokeRect(sx, sy, CELL_WIDTH, CELL_HEIGHT);
+            ctx.fillStyle = '#00FF00'; ctx.font = 'bold 16px Courier New';
+            ctx.fillText('SAFE', sx + CELL_WIDTH / 2, sy + 20);
+        } else {
+            // Less obtrusive for later levels
+            ctx.strokeStyle = '#00FF00'; ctx.lineWidth = 2;
+            ctx.strokeRect(sx, sy, CELL_WIDTH, CELL_HEIGHT);
+        }
+    }
+
+    // NEW: Smooth sliding frog logic (Fast snappy slide)
+    if (gameState !== 'PLAYER_DIED') {
+        let elapsedP = currentTime - (player.moveStartTime || currentTime);
+        let slideProgressP = Math.min(elapsedP / 100, 1); 
+        
+        let pVisualX = player.prevX + (player.x - player.prevX) * slideProgressP;
+        let pVisualY = player.prevY + (player.y - player.prevY) * slideProgressP;
+        
+        let px = pVisualX * CELL_WIDTH;
+        let py = pVisualY * CELL_HEIGHT + GRID_OFFSET_Y;
+        ctx.drawImage(images.frog, px + 10, py + 5, CELL_WIDTH - 20, CELL_HEIGHT - 10);
     }
     
     // Smooth sliding monster logic
@@ -736,10 +746,18 @@ window.addEventListener('keydown', (e) => {
         level = 1; score = 0; lives = 3; generateGrid(); gameState = 'BOARD_REVEAL';
         setTimeout(() => { gameState = 'PLAYING'; gameStartTime = performance.now(); lastMonsterMoveTime = performance.now(); }, 1000);
     } else if (gameState === 'PLAYING') {
-        if (e.key === 'ArrowUp' && player.y > 0) player.y--;
-        if (e.key === 'ArrowDown' && player.y < GRID_ROWS - 1) player.y++;
-        if (e.key === 'ArrowLeft' && player.x > 0) player.x--;
-        if (e.key === 'ArrowRight' && player.x < GRID_COLS - 1) player.x++;
+        // Track movement to update frog slide positions
+        let moved = false;
+        
+        if (e.key === 'ArrowUp' && player.y > 0) { player.prevX = player.x; player.prevY = player.y; player.y--; moved = true; }
+        if (e.key === 'ArrowDown' && player.y < GRID_ROWS - 1) { player.prevX = player.x; player.prevY = player.y; player.y++; moved = true; }
+        if (e.key === 'ArrowLeft' && player.x > 0) { player.prevX = player.x; player.prevY = player.y; player.x--; moved = true; }
+        if (e.key === 'ArrowRight' && player.x < GRID_COLS - 1) { player.prevX = player.x; player.prevY = player.y; player.x++; moved = true; }
+        
+        if (moved) {
+            player.moveStartTime = performance.now();
+        }
+        
         checkCollisions(); 
         
         if (e.key === ' ') {
