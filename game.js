@@ -225,7 +225,7 @@ function fetchGlobalLeaderboards() {
 }
 
 function saveScoreToSheets() {
-    let boardType = 'generalBoard';
+    let boardType  = 'generalBoard';
     if (entryReason === 'win' && lives === 3) boardType = 'immaculateBoard';
     if (entryReason === 'highscore') boardType = 'bestScoreBoard';
 
@@ -707,9 +707,13 @@ function gameLoop(timestamp) {
 
 // --- Input Handling ---
 window.addEventListener('keydown', (e) => {
+    // NEW FIX: Ignore the OS sending duplicate signals if a key is held down
+    if (e.repeat) return; 
+
     initAudio(); 
     
     if (gameState === 'CUTSCENE') {
+// ... the rest of the code continues normally
         if (e.key === 'Escape' || e.key === 'Enter') endCutscene();
         return; 
     }
